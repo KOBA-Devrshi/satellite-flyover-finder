@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Satellites over your place</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e;
+    --accent: #58a6ff; --green: #3fb950; --orange: #ff9f43;
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--accent); }
+  #bar { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: var(--accent); transition: width .25s, opacity .6s; z-index: 2000; opacity: 0; }
+  main { max-width: 920px; margin: 0 auto; padding: 28px 16px 24px; }
+  h1 { font-size: clamp(26px, 6vw, 38px); line-height: 1.15; margin: 0 0 6px; letter-spacing: -.02em; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; min-width: 0; padding: 12px 14px; font-size: 16px; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button { padding: 12px 20px; font-size: 16px; font-weight: 600; color: #04121f; background: var(--accent); border: 0; border-radius: 10px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { color: var(--muted); font-size: 14px; min-height: 1.5em; margin: 10px 0; }
+  #map { height: 280px; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; }
+  .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.9) saturate(.8); }
+  .leaflet-popup-content { color: #222; }
+  #headline { font-size: clamp(22px, 5vw, 30px); line-height: 1.3; margin: 24px 0 6px; font-weight: 600; letter-spacing: -.01em; }
+  #headline b { color: var(--accent); }
+  .note { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  h2 { font-size: 18px; margin: 28px 0 10px; }
+  .tablewrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  tr.sat { cursor: pointer; }
+  tr.sat:hover { background: #ffffff0a; }
+  tr.sat td:first-child::before { content: "\25B8"; display: inline-block; width: 1.1em; color: var(--muted); transition: transform .15s; }
+  tr.sat.open td:first-child::before { transform: rotate(90deg); }
+  tr.in td:first-child { color: var(--orange); font-weight: 600; box-shadow: inset 3px 0 var(--orange); }
+  .tag { font-size: 11px; font-weight: 600; color: #1a0f00; background: var(--orange); border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
+  tr.detail td { white-space: normal; background: #0000004d; color: var(--muted); font-size: 13px; }
+  tr.detail ul { margin: 0; padding-left: 20px; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; border: 1px solid var(--line); }
+  .pill.watched { color: var(--green); border-color: #3fb95066; background: #3fb9501a; }
+  .pill.likely { color: var(--accent); border-color: #58a6ff66; background: #58a6ff1a; }
+  .pill.overhead { color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; font-size: 13px; }
+  .card img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; background: #0006; }
+  .card div { padding: 8px 10px; color: var(--muted); }
+  .card b { color: var(--text); font-size: 14px; }
+  .ok { color: var(--green); }
+  footer { border-top: 1px solid var(--line); margin-top: 36px; padding-top: 16px; color: var(--muted); font-size: 13px; }
+  footer p { margin: 0 0 6px; }
+  [hidden] { display: none !important; }
+  @media (max-width: 520px) {
+    main { padding-top: 20px; }
+    #map { height: 220px; }
+    .grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    button { padding: 12px 14px; }
+    th, td { padding: 9px 8px; }
+  }
+</style>
+</head>
+<body>
+<div id="bar"></div>
+<main>
+  <h1>Satellites over your place</h1>
+  <p class="sub">Which Earth-observing satellites flew over, and which photos from them are public?</p>
+  <form id="form">
+    <input id="q" placeholder="Search a place, e.g. Mumbai" autocomplete="off" required>
+    <button id="go" type="submit">Search</button>
+  </form>
+  <div id="status"></div>
+  <div id="map"></div>
+
+  <div id="out" hidden>
+    <p id="headline"></p>
+    <p class="note">Passes are computed from public orbit data. “Likely watched” means a daylight pass of an imaging satellite (Sentinel-2 or Landsat); it is not proof that a photo was taken.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Satellite</th><th>Passes</th><th>Last pass</th><th>Status</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <h2>Public photos</h2>
+    <div id="photos"></div>
+  </div>
+
+  <footer>
+    <p>Orbit data: <a href="https://celestrak.org" target="_blank" rel="noopener">CelesTrak</a>.
+       Imagery: contains modified <a href="https://www.copernicus.eu" target="_blank" rel="noopener">Copernicus</a> Sentinel data; Landsat courtesy of
+       <a href="https://www.usgs.gov/landsat-missions" target="_blank" rel="noopener">USGS/NASA</a>, served by the
+       <a href="https://planetarycomputer.microsoft.com" target="_blank" rel="noopener">Microsoft Planetary Computer</a>.</p>
+    <p>Map and place search: &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors. Built with Leaflet and satellite.js.</p>
+  </footer>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js"></script>
+<script>
+const TLE_URL = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=resource&FORMAT=tle';
+const STAC_URL = 'https://planetarycomputer.microsoft.com/api/stac/v1/search';
+const CACHE_KEY = 'tle-resource-v1';
+const CACHE_MS = 2 * 3600 * 1000;
+const DAYS = 7, FAR_KM = 3500, FAR_STEP = 120000, NEAR_STEP = 10000, MIN_EL = 10, MIN_REVS = 11;
+const BOX = 0.03;
+const MATCH_BEFORE = 10 * 60000, MATCH_AFTER = 60 * 60000;
+const EARTH_R = 6371;
+const INDIAN = /CARTOSAT|RESOURCESAT|OCEANSAT|SRMSAT|\bIRS/i;
+const $ = id => document.getElementById(id);
+
+const map = L.map('map').setView([20, 0], 2);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+let marker = null, runId = 0, barTimer = null;
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function progress(frac, text) {
+  const bar = $('bar');
+  clearTimeout(barTimer);
+  bar.style.opacity = 1;
+  bar.style.width = Math.round(frac * 100) + '%';
+  if (text !== undefined) $('status').textContent = text;
+  if (frac >= 1) barTimer = setTimeout(() => { bar.style.opacity = 0; }, 800);
+}
+
+async function geocode(q) {
+  const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q));
+  if (!r.ok) throw new Error('Place search failed (' + r.status + ')');
+  const j = await r.json();
+  if (!j.length) return null;
+  return { lat: +j[0].lat, lon: +j[0].lon, name: j[0].display_name };
+}
+
+async function loadTle() {
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch (e) {}
+  if (cached && Date.now() - cached.t < CACHE_MS) return cached.text;
+  try {
+    const r = await fetch(TLE_URL);
+    if (!r.ok) throw new Error('CelesTrak error ' + r.status);
+    const text = await r.text();
+    if (!/^1 /m.test(text)) throw new Error('Unexpected CelesTrak response');
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), text })); } catch (e) {}
+    return text;
+  } catch (err) {
+    if (cached) return cached.text; // stale cache is better than nothing
+    throw err;
+  }
+}
+
+function parseTle(text) {
+  const lines = text.split(/\r?\n/).map(s => s.trimEnd()).filter(s => s.trim());
+  const out = [];
+  for (let i = 0; i + 2 < lines.length; i++) {
+    if (lines[i + 1].startsWith('1 ') && lines[i + 2].startsWith('2 ')) {
+      const name = lines[i].replace(/^0 /, '').trim();
+      try {
+        const rec = satellite.twoline2satrec(lines[i + 1], lines[i + 2]);
+        const revsPerDay = rec.no * 1440 / (2 * Math.PI); // rad/min -> revs/day
+        if (rec.error === 0 && revsPerDay >= MIN_REVS) out.push({ name, rec });
+      } catch (e) {}
+      i += 2;
+    }
+  }
+  return out;
+}
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * EARTH_R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+// Ground-distance limit in km for swath satellites, null for elevation-based ones
+function limitKm(name) {
+  if (/SENTINEL-2/i.test(name)) return 145;
+  if (/LANDSAT[ -]?[89]\b/i.test(name)) return 93;
+  return null;
+}
+
+// Sun elevation in degrees at a place and time (low-precision formula, good to ~0.1 deg)
+function sunElevation(lat, lon, t) {
+  const rad = Math.PI / 180;
+  const d = t / 86400000 + 2440587.5 - 2451545.0;
+  const g = (357.529 + 0.98560028 * d) * rad;
+  const L = (280.459 + 0.98564736 * d + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+  const eps = (23.439 - 0.00000036 * d) * rad;
+  const ra = Math.atan2(Math.cos(eps) * Math.sin(L), Math.cos(L));
+  const dec = Math.asin(Math.sin(eps) * Math.sin(L));
+  const H = satellite.gstime(new Date(t)) + lon * rad - ra;
+  const s = Math.sin(lat * rad) * Math.sin(dec) + Math.cos(lat * rad) * Math.cos(dec) * Math.cos(H);
+  return Math.asin(s) / rad;
+}
+
+function scan(sat, place, observerGd, start, end) {
+  const lim = limitKm(sat.name);
+  const passes = [];
+  let cur = null;
+  for (let t = start; t <= end;) {
+    const d = new Date(t);
+    const pv = satellite.propagate(sat.rec, d);
+    let dist = Infinity, el = -90, visible = false;
+    if (pv.position && typeof pv.position === 'object') {
+      const gmst = satellite.gstime(d);
+      const gd = satellite.eciToGeodetic(pv.position, gmst);
+      dist = haversine(place.lat, place.lon, satellite.degreesLat(gd.latitude), satellite.degreesLong(gd.longitude));
+      if (lim !== null) {
+        visible = dist <= lim;
+      } else {
+        const ecf = satellite.eciToEcf(pv.position, gmst);
+        el = satellite.ecfToLookAngles(observerGd, ecf).elevation * 180 / Math.PI;
+        visible = el >= MIN_EL;
+      }
+    }
+    if (visible) {
+      const metric = lim !== null ? dist : el;
+      if (!cur) cur = { start: t, end: t, best: metric };
+      cur.end = t;
+      cur.best = lim !== null ? Math.min(cur.best, metric) : Math.max(cur.best, metric);
+    } else if (cur) {
+      passes.push(cur);
+      cur = null;
+    }
+    t += dist > FAR_KM ? FAR_STEP : NEAR_STEP;
+  }
+  if (cur) passes.push(cur);
+  return { lim, passes };
+}
+
+const fmtFull = t => new Date(t).toLocaleString(undefined, {
+  year: 'numeric', month: 'short', day: 'numeric',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short'
+});
+const fmtShort = t => new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const fmtTime = t => new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+// ---- Photos (Microsoft Planetary Computer STAC) ----
+
+async function fetchPhotos(place, start, end) {
+  const iso = t => new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const minLon = +(place.lon - BOX).toFixed(5), minLat = +(place.lat - BOX).toFixed(5);
+  const maxLon = +(place.lon + BOX).toFixed(5), maxLat = +(place.lat + BOX).toFixed(5);
+  const bbox = `${minLon},${minLat},${maxLon},${maxLat}`;
+  const url = `${STAC_URL}?collections=sentinel-2-l2a,landsat-c2-l2&bbox=${bbox}&datetime=${iso(start)}/${iso(end)}&limit=100`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('Planetary Computer error ' + r.status);
+  const j = await r.json();
+  const photos = [];
+  for (const f of j.features || []) {
+    const href = f.assets && f.assets.rendered_preview && f.assets.rendered_preview.href;
+    const p = f.properties || {};
+    const t = Date.parse(p.datetime);
+    if (!href || !href.startsWith('https://') || isNaN(t)) continue;
+    photos.push({
+      src: href.replace('/item/preview.png?', `/item/bbox/${bbox}.png?`),
+      platform: p.platform || f.collection || 'unknown',
+      t,
+      cloud: typeof p['eo:cloud_cover'] === 'number' ? p['eo:cloud_cover'] : null
+    });
+  }
+  photos.sort((a, b) => b.t - a.t);
+  return photos;
+}
+
+const normName = s => String(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+// A pass of the same satellite from 10 min before to 60 min after the photo time
+function matchPass(photo, found) {
+  const key = normName(photo.platform);
+  const lo = photo.t - MATCH_BEFORE, hi = photo.t + MATCH_AFTER;
+  let best = null;
+  for (const f of found) {
+    if (normName(f.name) !== key) continue;
+    for (const p of f.passes) {
+      if (p.end >= lo && p.start <= hi) {
+        const gap = Math.abs(p.start - photo.t);
+        if (!best || gap < best.gap) best = { f, pass: p, gap };
+      }
+    }
+  }
+  return best;
+}
+
+// ---- Rendering ----
+
+function renderAll(place, shortName, found, photos, photoError) {
+  const watched = new Set();
+  let cards = '';
+  if (photos) {
+    cards = photos.length ? '<div class="grid">' + photos.map(ph => {
+      const m = matchPass(ph, found);
+      if (m) watched.add(m.f.name);
+      const cloud = ph.cloud === null ? 'n/a' : ph.cloud.toFixed(1) + '%';
+      const line = m ? `<span class="ok">Matched pass ${fmtShort(m.pass.start)}</span>` : 'No matching pass';
+      return `<div class="card"><a href="${esc(ph.src)}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(ph.src)}" alt="${esc(ph.platform)} photo"></a>` +
+        `<div><b>${esc(ph.platform)}</b><br>${fmtShort(ph.t)}<br>Cloud cover: ${cloud}<br>${line}</div></div>`;
+    }).join('') + '</div>' : '<p class="note">No public photos found for this place in the last 7 days.</p>';
+  } else {
+    cards = `<p class="note">Could not load photos: ${esc(photoError)}</p>`;
+  }
+  $('photos').innerHTML = cards;
+
+  const rows = found.map(f => {
+    let key = 'overhead', label = 'Passed overhead';
+    if (watched.has(f.name)) { key = 'watched'; label = 'Watched, photo public'; }
+    else if (/SENTINEL-2|LANDSAT/i.test(f.name) &&
+             f.passes.some(p => sunElevation(place.lat, place.lon, (p.start + p.end) / 2) > 0)) { key = 'likely'; label = 'Likely watched'; }
+    return { f, key, label };
+  });
+  const order = { watched: 0, likely: 1, overhead: 2 };
+  rows.sort((a, b) => order[a.key] - order[b.key] || a.f.name.localeCompare(b.f.name));
+
+  $('rows').innerHTML = rows.length ? rows.map(({ f, key, label }) => {
+    const indian = INDIAN.test(f.name);
+    const items = f.passes.map(p => {
+      const when = p.end > p.start ? `${fmtFull(p.start)} &rarr; ${fmtTime(p.end)}` : fmtFull(p.start);
+      const best = f.lim !== null ? `closest ${p.best.toFixed(0)} km` : `max elevation ${p.best.toFixed(0)}°`;
+      return `<li>${when} (${best})</li>`;
+    }).join('');
+    return `<tr class="sat${indian ? ' in' : ''}" tabindex="0"><td>${esc(f.name)}${indian ? '<span class="tag">India</span>' : ''}</td>` +
+      `<td>${f.passes.length}</td><td>${fmtShort(f.passes[f.passes.length - 1].start)}</td>` +
+      `<td><span class="pill ${key}">${label}</span></td></tr>` +
+      `<tr class="detail" hidden><td colspan="4"><ul>${items}</ul></td></tr>`;
+  }).join('') : '<tr><td colspan="4" style="color:var(--muted)">No satellites passed.</td></tr>';
+
+  const n = found.length;
+  const sats = `<b>${n}</b> satellite${n === 1 ? '' : 's'} ${n === 1 ? 'passed' : 'passed'}`;
+  let h = `In the last 7 days, ${sats} over <b>${esc(shortName)}</b>.`;
+  if (photos) h += ` <b>${photos.length}</b> photo${photos.length === 1 ? ' is' : 's are'} public.`;
+  else h += ' Photos could not be loaded.';
+  $('headline').innerHTML = h;
+  $('out').hidden = false;
+  return { n, m: photos ? photos.length : 0 };
+}
+
+$('rows').addEventListener('click', e => {
+  const tr = e.target.closest('tr.sat');
+  if (!tr) return;
+  tr.classList.toggle('open');
+  tr.nextElementSibling.hidden = !tr.classList.contains('open');
+});
+$('rows').addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('tr.sat')) { e.preventDefault(); e.target.click(); }
+});
+
+// ---- Main ----
+
+async function search(q) {
+  const id = ++runId;
+  $('go').disabled = true;
+  $('out').hidden = true;
+  try {
+    progress(0.03, 'Finding place…');
+    const place = await geocode(q);
+    if (id !== runId) return;
+    if (!place) { progress(1, 'Place not found. Try another name.'); return; }
+    const shortName = place.name.split(',')[0].trim() || q;
+
+    if (marker) marker.remove();
+    marker = L.marker([place.lat, place.lon]).addTo(map).bindPopup(esc(place.name)).openPopup();
+    map.setView([place.lat, place.lon], 9);
+
+    const end = Date.now(), start = end - DAYS * 86400000;
+    // The photo search runs while the passes are computed
+    const photosP = fetchPhotos(place, start, end).then(v => ({ v }), e => ({ e }));
+
+    progress(0.1, 'Loading satellite orbits…');
+    const sats = parseTle(await loadTle());
+    if (!sats.length) throw new Error('No usable satellites in the orbit data');
+
+    const observerGd = { latitude: place.lat * Math.PI / 180, longitude: place.lon * Math.PI / 180, height: 0 };
+    const found = [];
+    for (let i = 0; i < sats.length; i++) {
+      if (id !== runId) return;
+      if (i % 3 === 0) {
+        progress(0.15 + 0.7 * i / sats.length, `Replaying 7 days of orbits… ${i}/${sats.length} satellites`);
+        await new Promise(r => setTimeout(r, 0));
+      }
+      const { lim, passes } = scan(sats[i], place, observerGd, start, end);
+      if (passes.length) found.push({ name: sats[i].name, lim, passes });
+    }
+    if (id !== runId) return;
+
+    progress(0.9, 'Loading public photos…');
+    const res = await photosP;
+    if (id !== runId) return;
+    const { n, m } = renderAll(place, shortName, found, res.v, res.e && res.e.message);
+    progress(1, res.e ? `Done. ${n} satellites passed; photos unavailable.` : `Done. ${n} satellites passed, ${m} photos public.`);
+  } catch (err) {
+    progress(1, 'Error: ' + err.message);
+  } finally {
+    if (id === runId) $('go').disabled = false;
+  }
+}
+
+$('form').addEventListener('submit', e => {
+  e.preventDefault();
+  const q = $('q').value.trim();
+  if (q) search(q);
+});
+</script>
+</body>
+</html>
